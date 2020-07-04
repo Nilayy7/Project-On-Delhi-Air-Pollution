@@ -1,0 +1,138 @@
+library(padr)
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(magrittr)
+library(forecast)
+library(imputeTS)
+library(DMwR)
+#Read Data
+delhi_air <- read_excel("C:/Users/Chetan Yewale/Downloads/Delhi.xlsx")
+str(delhi_air)
+
+#Converting structure of PM25 Data Into Numeric
+delhi_air$pm25 <- gsub('-',NA,delhi_air$pm25,fixed=TRUE)       #"-" converted into NA
+delhi_air$pm25<- as.numeric(delhi_air$pm25)
+str(delhi_air)
+plot(delhi_air$pm25,type = "l")
+
+##Counting NA Values
+sum(is.na(delhi_air$pm25))
+
+## Filling up Date n Time
+delhi_fill<- pad(as.data.frame(delhi_air,interval = NULL, start_val = NULL, end_val =NULL))
+View(delhi_fill)
+sum(is.na(delhi_fill$pm25))
+plotNA.distribution(delhi_fill$pm25)    ## showing missing values
+str(delhi_fill)
+
+
+##replacing missing values with 
+#delhi_fill$intrpolation<- na_seasplit(delhi_fill$pm25,algorithm = "interpolation",find_frequency=TRUE)
+delhi_fill$pm_ma<- na_seasplit(delhi_fill$pm25,algorithm = "ma",find_frequency = T)
+
+View(delhi_fill)
+str(delhi_fill)
+## Converted Into Time Series 
+ts_delhi<- ts(delhi_fill$pm_ma,frequency =365*24,start = c(2018,1),end = c(2018,2617))
+str(ts_delhi)
+
+######  Testing For Data whether it is stationery Or Not
+library(aTSA)
+library(tseries)
+stationary.test(delhi_fill$pm_ma, method = "pp") # pp test
+stationary.test(delhi_fill$pm_ma,method = "kpss")  #Kwiatkowski-Phillips-Schmidt-Shin test
+trend.test(delhi_fill$pm_ma)
+
+##Decomposing
+delhi_decomp<- stl(delhi_fill$pm_ma,s.window = "periodic")
+plot(delhi_decomp)
+
+## Visualization  ##
+library(ggplot2)
+
+## With INTERPOLATIOn values
+ggplot(data = delhi_fill,aes(x= date,y= intrpolation)) + 
+  geom_line(colour='red') +
+  geom_line(colour='blue',data = delhi_air,aes(x= date,y= pm25))+
+  theme(panel.background = element_blank())+
+  ylim(0,750)+
+  ggtitle("Interpolation Values")
+
+
+### With TIME SERIES MOVING AVERAGE
+ggplot(data = delhi_fill,aes(x= date,y= pm_ma)) + 
+  geom_line(colour='red') +
+  geom_line(colour="Blue",data = delhi_air,aes(x= date,y= pm25))+
+  theme(panel.background = element_blank())+
+  ylim(0,750)+
+  ggtitle("MOVING AVERAGE Values")
+
+View(delhi_fill)
+delhi_fill<- delhi_fill[,-c(2)]
+
+##Splitting Into Train n Test in Time Series
+train<- delhi_fill[1:2094,]
+test<- delhi_fill[2095:2617,]
+str(train)
+
+train<- ts(train$pm_ma)
+test<- ts(test$pm_ma)
+
+library(dplyr)
+library(smooth)
+library(fpp)
+
+##Using Holts Winter Method
+#considering data has only level parameter
+# alpha = 0.2
+hw_a<- HoltWinters(train,alpha = 0.2, beta = F,gamma = F)
+accuracy(hw_a$fitted,train)                         #### Train RMSE = 88.93
+hwa_pred<- data.frame(predict(hw_a,n.ahead = 523))
+plot(forecast(hw_a,h =523))
+accuracy(hwa_pred$fit,test)                         #### Test RMSE = 94.44
+hwa_mape<- MAPE(hwa_pred$fit,test)*100
+hwa_mape
+
+## Considering it has level and trend
+# alpha = 0.15 and beta = 0.2
+hw_ab<- HoltWinters(train,alpha = 0.2 , beta = 0.1,gamma = F)
+accuracy(hw_ab$fitted,train)                       #### Train RMSE = 101.54
+hwab_pred<- data.frame(predict(hw_ab,n.ahead = 523))
+plot(forecast(hw_ab,h = 523))
+accuracy(hwab_pred$fit,test)                        #### Test RMSE = 637.03
+hwab_mape<- MAPE(hwab_pred$fit,test)*100
+hwab_mape
+
+## Without Optimum Value
+# with only level Parameter
+hw_na<- HoltWinters(train,beta = F, gamma = F)
+accuracy(hw_na$fitted,train)                       #### Train RMSE = 55.18
+hwna_pred<- data.frame(predict(hw_na,n.ahead = 523))
+plot(forecast(hw_na,h = 523))
+accuracy(hwna_pred$fit,test)                       #### Test RMSE = 162.14
+hwna_mape<- MAPE(hwna_pred$fit,test)*100
+hwna_mape
+
+#with level n trend Parameter
+hw_nab<- HoltWinters(train,gamma = F)
+accuracy(hw_nab$fitted,train)                     ### Train RMSE = 55.32
+hwnab_pred<- data.frame(predict(hw_nab,n.ahead = 523))
+plot(forecast(hw_nab,h = 523))
+accuracy(hwnab_pred$fit,test)                    #### Test RMSE = 222.58
+hwnab_mape<- MAPE(hwnab_pred$fit,test)*100
+hwnab_mape
+
+## Creating Table
+df_mape<- data.frame(Model = c("hwa_mape","hwab_mape","hwna_mape","hwnab_mape"),Values = c(hwa_mape,hwab_mape,hwna_mape,hwnab_mape))
+View(df_mape)
+
+##########################################################################################
+
+##### RUN ON WHOLE DATASET  #####
+
+new_model<- HoltWinters(delhi_fill$pm_ma)
+accuracy(new_model$fitted,delhi_fill$pm_ma)      ### RMSE = 56.15
+plot(forecast(new_model,h= 523))
+forecast_new<- data.frame(predict(new_model,n.ahead = 523))
+View(forecast_new)

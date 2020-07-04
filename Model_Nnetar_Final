@@ -1,0 +1,128 @@
+library(padr)
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(magrittr)
+library(forecast)
+library(imputeTS)
+library(DMwR)
+
+#Read Data
+delhi_air <- read_excel("C:/Users/Chetan Yewale/Downloads/Delhi.xlsx")
+str(delhi_air)
+
+#Converting structure of PM25 Data Into Numeric
+delhi_air$pm25 <- gsub('-',NA,delhi_air$pm25,fixed=TRUE)       #"-" converted into NA
+delhi_air$pm25<- as.numeric(delhi_air$pm25)
+str(delhi_air)
+plot(delhi_air$pm25,type = "l")
+
+
+##Counting NA Values
+sum(is.na(delhi_air$pm25))
+
+## Filling up Date n Time
+delhi_fill<- pad(as.data.frame(delhi_air,interval = NULL, start_val = NULL, end_val =NULL))
+View(delhi_fill)
+sum(is.na(delhi_fill$pm25))
+plotNA.distribution(delhi_fill$pm25)    ## showing missing values
+str(delhi_fill)
+
+
+##replacing missing values with 
+#delhi_fill$intrpolation<- na_seasplit(delhi_fill$pm25,algorithm = "interpolation",find_frequency=TRUE)
+delhi_fill$pm_ma<- na_seasplit(delhi_fill$pm25,algorithm = "ma",find_frequency = T)
+
+View(delhi_fill)
+str(delhi_fill)
+delhi_fill<- delhi_fill[,-c(2)]
+
+## Converted Into Time Series 
+delhi_fill$pm_ma<- ts(delhi_fill$pm_ma,frequency =365*24,start = c(2018,1),end = c(2018,2617))
+str(delhi_fill)
+
+######  Testing For Data whether it is stationery Or Not
+library(aTSA)
+library(tseries)
+stationary.test(delhi_fill$pm_ma, method = "pp") # pp test
+stationary.test(delhi_fill$pm_ma,method = "adf")  #adf test
+trend.test(delhi_fill$pm_ma)
+
+## Visualization  ##
+library(ggplot2)
+
+## With Missing Values ##
+ggplot(data = delhi_air,aes(x= date,y= pm25)) + 
+  geom_line(colour='blue') +
+  theme(panel.background = element_blank())+
+  ylim(0,750)+
+  ggtitle("Missing Values")
+
+### With TIME SERIES MOVING AVERAGE
+ggplot(data = delhi_fill,aes(x= date,y= pm_ma)) + 
+  geom_line(colour='red') +
+  geom_line(colour="Blue",data = delhi_air,aes(x= date,y= pm25))+
+  theme(panel.background = element_blank())+
+  ylim(0,750)+
+  ggtitle("MOVING AVERAGE Values")
+
+View(delhi_fill)
+str(delhi_fill)
+
+### splitting
+train<- delhi_fill[1:2094,]
+test<- delhi_fill[2095:2617,]
+str(train)
+
+train<- ts(train$pm_ma)  
+test<- ts(test$pm_ma)
+library(dplyr)
+
+##Model building
+
+
+#####################   Forecast Using Neural Network     ######################################
+
+#Model_1#
+set.seed(123)
+fit <- nnetar(train)
+accuracy(fit)                        ### Train RMSE = 31.99
+fcast<- forecast(fit,h = 523)
+pred_fit<- data.frame(predict(fcast,n.ahead = 523))
+plot(forecast(fit,h = 72))
+accuracy(pred_fit$Point.Forecast,test) ### Test RMSE = 74.12
+View(pred_fit)
+
+##  Run on Whole Data-Set
+set.seed(123)
+fit_3 <- nnetar(delhi_fill$pm_ma)
+accuracy(fit_3)                     ### Train RMSE = 33.49
+fcast_3<- forecast(fit_3,h = 523)
+pred_fit_3<- data.frame(predict(fcast_3,n.ahead = 523))
+plot(forecast(fit_3,h = 523))
+accuracy(fit_3$x,fit_3$fitted)
+
+
+
+############################## Extra Models  ##########################################
+
+# Model_2 #
+set.seed(123)
+fit_4<- nnetar(train,p = 24,size = 12)    
+accuracy(fit_4)                             #### Train RMSE = 35.87
+fcast_4<- forecast(fit_4,h = 523)
+pred_fit_4<- data.frame(predict(fcast_4,n.ahead = 523))
+plot(fcast_4)
+accuracy(as.vector(fcast_4$mean),test)      ####  Test RMSE = 110.89
+accuracy(pred_fit_4$Point.Forecast,test)
+
+
+
+# Model_3 #
+set.seed(123)
+fit_5 <- nnetar(train,p = 24,size = 13)      
+accuracy(fit_5)                           ### Train RMSE = 35.08
+fcast_5<- forecast(fit_5,h = 523)
+pred_fit_5<- data.frame(predict(fcast_5,n.ahead = 523))
+plot(fcast_5)
+accuracy(pred_fit_5$Point.Forecast,test)  ### Test RMSE = 106.78
